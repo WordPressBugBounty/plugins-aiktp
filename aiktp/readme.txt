@@ -4,7 +4,7 @@ Tags: ai, content, seo, woocommerce, automation
 Requires at least: 5.8
 Tested up to: 6.9
 Requires PHP: 7.0
-Stable tag: 5.0.5
+Stable tag: 5.0.6
 License: GPL v2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 

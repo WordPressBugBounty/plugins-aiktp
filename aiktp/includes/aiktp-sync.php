@@ -605,6 +605,7 @@ class AIKTPZ_Post_Sync {
         $featured_image = $request['featuredImage'];
         $cat_id = $request['catId'] ? $request['catId'] : '0';
         $post_status = $request['post_status'] ? $request['post_status'] : 'publish';
+        $current_post_id = !empty($request['currentPostId']) ? absint($request['currentPostId']) : 0;
         
         // Get author
         $aiktp_author = get_option('aiktp_author');
@@ -663,6 +664,16 @@ class AIKTPZ_Post_Sync {
         $post_type = $is_woo_product ? 'product' : 'post';
         $final_categories = $is_woo_product ? $product_categories : $regular_categories;
         
+        $post_date = current_time('mysql');
+        $post_date_gmt = current_time('mysql', 1);
+        if (!empty($request['postTime'])) {
+            $post_time = strtotime($request['postTime']);
+            if ($post_time) {
+                $post_date = date('Y-m-d H:i:s', $post_time);
+                $post_date_gmt = gmdate('Y-m-d H:i:s', $post_time);
+            }
+        }
+
         // Build post data
         $new_post = array(
             'post_title' => $post_title, 
@@ -671,8 +682,8 @@ class AIKTPZ_Post_Sync {
             'post_status' => $post_status,
             'post_author' => $aiktp_author,
             'post_type' => $post_type,
-            'post_date' => current_time('mysql'),
-            'post_date_gmt' => current_time('mysql', 1)
+            'post_date' => $post_date,
+            'post_date_gmt' => $post_date_gmt
         );
         
         // Add categories based on post type
@@ -681,7 +692,31 @@ class AIKTPZ_Post_Sync {
         }
         
         kses_remove_filters();
-        $post_id = wp_insert_post($new_post);
+        if (empty($current_post_id)) {
+            $post_id = wp_insert_post($new_post);
+        } else {
+            $new_post['ID'] = $current_post_id;
+
+            try {
+                unset($new_post['post_date']);
+                unset($new_post['post_date_gmt']);
+                $new_post['post_modified'] = $post_date;
+                $new_post['post_modified_gmt'] = $post_date_gmt;
+                $post_id = wp_update_post($new_post);
+
+                if (empty($post_id)) {
+                    unset($new_post['ID']);
+                    $new_post['post_date'] = $post_date;
+                    $new_post['post_date_gmt'] = $post_date_gmt;
+                    $post_id = wp_insert_post($new_post);
+                }
+            } catch (Exception $e) {
+                unset($new_post['ID']);
+                $new_post['post_date'] = $post_date;
+                $new_post['post_date_gmt'] = $post_date_gmt;
+                $post_id = wp_insert_post($new_post);
+            }
+        }
         kses_init_filters();
         
         // For WooCommerce products, set product categories using taxonomy

@@ -75,6 +75,12 @@ class AIKTPZ_Post_Sync {
             'callback' => array($this, 'upload_image_to_wp'),
             'permission_callback' => array($this, 'verify_aiktp_token_with_upload_capability')
         ));
+
+        register_rest_route('aiktp', '/doUpdatePostWithImageURL', array(
+            'methods' => 'POST',
+            'callback' => array($this, 'update_post_with_image_url_endpoint'),
+            'permission_callback' => array($this, 'verify_aiktp_token_with_edit_capability')
+        ));
         
         // Read endpoints - public access (read-only)
         register_rest_route('aiktp', '/getPostByURL', array(
@@ -438,6 +444,7 @@ class AIKTPZ_Post_Sync {
         
         return array(
             'status' => 'success',
+            'allowAsync' => true,
             'cats' => $cats
         );
     }
@@ -599,13 +606,18 @@ class AIKTPZ_Post_Sync {
         
         // Get post data
         $post_title = sanitize_text_field($request['title']);
-        // Content should allow HTML tags, use wp_kses_post for sanitization
-        $post_content = isset($request['content']) ? wp_kses_post($request['content']) : '';
+        // Normalize URLs in HTML attributes before sanitization so query strings keep '&amp;'.
+        $raw_post_content = isset($request['content']) ? (string) $request['content'] : '';
+        $normalized_post_content = AIKTPZ_Helpers::normalize_html_attribute_urls($raw_post_content);
+        $post_content = wp_kses_post($normalized_post_content);
         $tags_input = sanitize_text_field($request['tags']);
-        $featured_image = $request['featuredImage'];
-        $cat_id = $request['catId'] ? $request['catId'] : '0';
-        $post_status = $request['post_status'] ? $request['post_status'] : 'publish';
+        $featured_image = isset($request['featuredImage']) ? (string) $request['featuredImage'] : '';
+        $cat_id = !empty($request['catId']) ? $request['catId'] : '0';
+        $post_status = !empty($request['post_status']) ? $request['post_status'] : 'publish';
         $current_post_id = !empty($request['currentPostId']) ? absint($request['currentPostId']) : 0;
+        $serp_title = isset($request['serp_title']) ? sanitize_text_field($request['serp_title']) : '';
+        $serp_description = isset($request['serp_des']) ? sanitize_text_field($request['serp_des']) : '';
+        $serp_score = isset($request['serp_score']) ? sanitize_text_field($request['serp_score']) : '';
         
         // Get author
         $aiktp_author = get_option('aiktp_author');
@@ -669,7 +681,7 @@ class AIKTPZ_Post_Sync {
         if (!empty($request['postTime'])) {
             $post_time = strtotime($request['postTime']);
             if ($post_time) {
-                $post_date = date('Y-m-d H:i:s', $post_time);
+                $post_date = wp_date('Y-m-d H:i:s', $post_time);
                 $post_date_gmt = gmdate('Y-m-d H:i:s', $post_time);
             }
         }
@@ -725,6 +737,7 @@ class AIKTPZ_Post_Sync {
         }
         
         // Add tags
+        $tags_array = array();
         if (!empty($tags_input)) {
             $tags_array = array_map('trim', explode(',', $tags_input));
             wp_set_post_tags($post_id, $tags_array);
@@ -739,13 +752,37 @@ class AIKTPZ_Post_Sync {
         }
         
         // Update SEO meta if plugins are active
-        if (class_exists('RankMath') && !empty($tags_array)) {
-            update_post_meta($post_id, 'rank_math_focus_keyword', implode(', ', $tags_array));
+        if (class_exists('RankMath')) {
+            if (!empty($tags_array)) {
+                update_post_meta($post_id, 'rank_math_focus_keyword', implode(', ', array_unique($tags_array)));
+            }
+            if ($serp_title !== '') {
+                update_post_meta($post_id, 'rank_math_title', $serp_title);
+            }
+            if ($serp_description !== '') {
+                update_post_meta($post_id, 'rank_math_description', $serp_description);
+            }
+            if ($serp_score !== '') {
+                update_post_meta($post_id, 'rank_math_seo_score', $serp_score);
+            }
         }
         
-        if (defined('WPSEO_VERSION') && !empty($tags_array[0])) {
-            update_post_meta($post_id, '_yoast_wpseo_focuskw', $tags_array[0]);
+        if (defined('WPSEO_VERSION')) {
+            if (!empty($tags_array[0])) {
+                update_post_meta($post_id, '_yoast_wpseo_focuskw', $tags_array[0]);
+            }
+            if ($serp_title !== '') {
+                update_post_meta($post_id, '_yoast_wpseo_title', $serp_title);
+            }
+            if ($serp_description !== '') {
+                update_post_meta($post_id, '_yoast_wpseo_metadesc', $serp_description);
+            }
+            if ($serp_score !== '') {
+                update_post_meta($post_id, '_yoast_wpseo_content_score', $serp_score);
+            }
         }
+
+        
         
         return array(
             'status' => 'success',
@@ -795,6 +832,80 @@ class AIKTPZ_Post_Sync {
                 'imgURL' => $img_url
             );
         }
+    }
+
+    /**
+     * Update post content by replacing remote image URLs with WordPress image URLs.
+     *
+     * SECURITY: Token and edit capability validation is handled in permission_callback.
+     */
+    public function update_post_with_image_url_endpoint($request) {
+        $post_id = !empty($request['postId']) ? absint($request['postId']) : 0;
+        $imgs = $request->get_param('imgs');
+
+        if (empty($post_id) || empty($imgs) || !is_array($imgs)) {
+            return array(
+                'status' => 'error'
+            );
+        }
+
+        return $this->update_post_with_image_url($post_id, $imgs);
+    }
+
+    /**
+     * Replace image URLs in post content.
+     */
+    private function update_post_with_image_url($post_id, $imgs) {
+        $post_data = get_post($post_id);
+        if (!$post_data || empty($post_data->post_content)) {
+            return array(
+                'status' => 'error'
+            );
+        }
+
+        $post_content = $post_data->post_content;
+      
+       
+        foreach ($imgs as $img) {
+            if (!is_array($img)) {
+                continue;
+            }
+
+            $source_url = isset($img['imgURL']) ? (string) $img['imgURL'] : '';
+            $img_proxy_url = isset($img['imgProxy']) ? (string) $img['imgProxy'] : '';
+            $target_url = isset($img['wp_imgURL']) ? (string) $img['wp_imgURL'] : '';
+
+           
+            if ($target_url === '') {
+                continue;
+            }
+
+            if ($source_url !== '') {
+                $post_content = str_replace($source_url, $target_url, $post_content);
+                $post_content = str_replace(str_replace('&', '&amp;', $source_url), $target_url, $post_content);
+            }
+
+            if ($img_proxy_url !== '') {
+                $post_content = str_replace($img_proxy_url, $target_url, $post_content);
+                $post_content = str_replace(str_replace('&', '&amp;', $img_proxy_url), $target_url, $post_content);
+            }
+        }
+
+        $update_id = wp_update_post(array(
+            'ID' => $post_id,
+            'post_content' => $post_content
+        ));
+
+        if (is_wp_error($update_id) || empty($update_id)) {
+            return array(
+                'status' => 'error'
+            );
+        }
+
+        return array(
+            'status' => 'success',
+            'updateId' => $post_id
+        );
     }
 }
 

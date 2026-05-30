@@ -157,4 +157,29 @@ class AIKTPZ_Helpers {
         preg_match_all('/<img[^>]+src\s*=\s*["\']([^"\']+)["\']/i', $html, $matches);
         return $matches[1];
     }
+
+    /**
+     * Normalize src/href attribute URLs so query separators survive HTML sanitization.
+     */
+    public static function normalize_html_attribute_urls($html) {
+        if (!is_string($html) || $html === '') {
+            return '';
+        }
+
+        return preg_replace_callback(
+            '/\b(src|href)\s*=\s*(["\'])(.*?)\2/i',
+            function ($matches) {
+                $attribute = $matches[1];
+                $quote = $matches[2];
+                $url = html_entity_decode($matches[3], ENT_QUOTES, 'UTF-8');
+
+                if (strpos($url, '&') !== false) {
+                    $url = str_replace('&', '&amp;', $url);
+                }
+
+                return $attribute . '=' . $quote . $url . $quote;
+            },
+            $html
+        );
+    }
 }

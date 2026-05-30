@@ -3,7 +3,7 @@
  * Plugin Name: AIKTP
  * Plugin URI: https://aiktp.com/wordpress
  * Description: AIKTP - AI powered WordPress content automation. Create SEO optimized articles, bulk generate WooCommerce product descriptions, and sync posts directly from aiktp.com.
- * Version: 5.0.6
+ * Version: 5.0.7
  * Author: John Luke - aiktp.com
  * License: GPL v2 or later
  * License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -14,14 +14,12 @@
  * WC requires at least: 5.0
  * WC tested up to: 9.0
  */
-
-
 if (!defined('ABSPATH')) {
     exit;
 }
 
 // Define constants
-define('AIKTPZ_VERSION', '5.0.6');
+define('AIKTPZ_VERSION', '5.0.7');
 define('AIKTPZ_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('AIKTPZ_PLUGIN_URL', plugin_dir_url(__FILE__));
 // Include modules
